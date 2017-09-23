@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.torrent.messaging;
 
 import bt.data.Bitfield;
@@ -19,7 +35,6 @@ import java.time.Duration;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
@@ -121,7 +136,7 @@ public class TorrentWorker {
      *
      * @since 1.0
      */
-    public void addPeer(Peer peer) {
+    private void addPeer(Peer peer) {
         PieceAnnouncingPeerWorker worker = createPeerWorker(peer);
         PieceAnnouncingPeerWorker existing = peerMap.putIfAbsent(peer, worker);
         if (existing == null) {
@@ -134,39 +149,41 @@ public class TorrentWorker {
     }
 
     private void consume(Peer peer, Message message) {
-        PieceAnnouncingPeerWorker worker = getWorker(peer);
-        worker.accept(message);
+        getWorker(peer).ifPresent(worker -> worker.accept(message));
     }
 
-    public Message produce(Peer peer) {
-        PieceAnnouncingPeerWorker worker = getWorker(peer);
+    private Message produce(Peer peer) {
+        Message message = null;
 
-        Message message;
-        Bitfield bitfield = getBitfield();
-        Assignments assignments = getAssignments();
+        Optional<PieceAnnouncingPeerWorker> workerOptional = getWorker(peer);
+        if (workerOptional.isPresent()) {
+            PieceAnnouncingPeerWorker worker = workerOptional.get();
+            Bitfield bitfield = getBitfield();
+            Assignments assignments = getAssignments();
 
-        if (bitfield != null && assignments != null && (bitfield.getPiecesRemaining() > 0 || assignments.count() > 0)) {
-            inspectAssignment(peer, assignments);
-            if (shouldUpdateAssignments(assignments)) {
-                processDisconnectedPeers(assignments, getStatistics());
-                processTimeoutedPeers();
-                updateAssignments(assignments);
+            if (bitfield != null && assignments != null && (bitfield.getPiecesRemaining() > 0 || assignments.count() > 0)) {
+                inspectAssignment(peer, worker, assignments);
+                if (shouldUpdateAssignments(assignments)) {
+                    processDisconnectedPeers(assignments, getStatistics());
+                    processTimeoutedPeers();
+                    updateAssignments(assignments);
+                }
+                Message interestUpdate = interestUpdates.remove(peer);
+                message = (interestUpdate == null) ? worker.get() : interestUpdate;
+            } else {
+                message = worker.get();
             }
-            Message interestUpdate = interestUpdates.remove(peer);
-            message = (interestUpdate == null) ? worker.get() : interestUpdate;
-        } else {
-            message = worker.get();
         }
 
         return message;
     }
 
-    private PieceAnnouncingPeerWorker getWorker(Peer peer) {
-        return Objects.requireNonNull(peerMap.get(peer), "Unknown peer: " + peer);
+    private Optional<PieceAnnouncingPeerWorker> getWorker(Peer peer) {
+        return Optional.ofNullable(peerMap.get(peer));
     }
 
-    private void inspectAssignment(Peer peer, Assignments assignments) {
-        ConnectionState connectionState = getWorker(peer).getConnectionState();
+    private void inspectAssignment(Peer peer, PeerWorker peerWorker, Assignments assignments) {
+        ConnectionState connectionState = peerWorker.getConnectionState();
         Assignment assignment = assignments.get(peer);
         boolean shouldAssign;
         if (assignment != null) {
@@ -283,24 +300,28 @@ public class TorrentWorker {
         Set<Peer> interesting = assignments.update(ready, choking);
 
         ready.stream().filter(peer -> !interesting.contains(peer)).forEach(peer -> {
-            ConnectionState connectionState = getWorker(peer).getConnectionState();
-            if (connectionState.isInterested()) {
-                interestUpdates.put(peer, NotInterested.instance());
-                connectionState.setInterested(false);
-            }
+            getWorker(peer).ifPresent(worker -> {
+                ConnectionState connectionState = worker.getConnectionState();
+                if (connectionState.isInterested()) {
+                    interestUpdates.put(peer, NotInterested.instance());
+                    connectionState.setInterested(false);
+                }
+            });
         });
 
         choking.forEach(peer -> {
-            ConnectionState connectionState = getWorker(peer).getConnectionState();
-            if (interesting.contains(peer)) {
-                if (!connectionState.isInterested()) {
-                    interestUpdates.put(peer, Interested.instance());
-                    connectionState.setInterested(true);
+            getWorker(peer).ifPresent(worker -> {
+                ConnectionState connectionState = worker.getConnectionState();
+                if (interesting.contains(peer)) {
+                    if (!connectionState.isInterested()) {
+                        interestUpdates.put(peer, Interested.instance());
+                        connectionState.setInterested(true);
+                    }
+                } else if (connectionState.isInterested()) {
+                    interestUpdates.put(peer, NotInterested.instance());
+                    connectionState.setInterested(false);
                 }
-            } else if (connectionState.isInterested()) {
-                interestUpdates.put(peer, NotInterested.instance());
-                connectionState.setInterested(false);
-            }
+            });
         });
 
         lastUpdatedAssignments = System.currentTimeMillis();

@@ -1,20 +1,32 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt;
 
-import bt.processor.ChainProcessor;
 import bt.processor.ProcessingContext;
-import bt.processor.ProcessingStage;
+import bt.processor.Processor;
 import bt.processor.listener.ListenerSource;
 import bt.runtime.BtClient;
-import bt.torrent.TorrentDescriptor;
-import bt.torrent.TorrentRegistry;
+import bt.runtime.BtRuntime;
 import bt.torrent.TorrentSessionState;
 
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -25,104 +37,105 @@ import java.util.function.Consumer;
  */
 class DefaultClient<C extends ProcessingContext> implements BtClient {
 
-    private TorrentRegistry torrentRegistry;
-
-    private ProcessingStage<C> processor;
+    private BtRuntime runtime;
+    private Processor<C> processor;
     private ListenerSource<C> listenerSource;
     private C context;
-    private Optional<CompletableFuture<?>> future;
-    private Optional<Consumer<TorrentSessionState>> listener;
-    private Optional<ScheduledFuture<?>> listenerFuture;
 
-    private ExecutorService executor;
-    private ScheduledExecutorService listenerExecutor;
+    private volatile Optional<CompletableFuture<?>> futureOptional;
+    private volatile Optional<Consumer<TorrentSessionState>> listenerOptional;
 
-    private volatile boolean started;
+    private volatile ScheduledExecutorService listenerExecutor;
 
-    public DefaultClient(ExecutorService executor,
-                         TorrentRegistry torrentRegistry,
-                         ProcessingStage<C> processor,
-                         ListenerSource<C> listenerSource,
-                         C context) {
-        this.torrentRegistry = torrentRegistry;
-        this.executor = executor;
+    public DefaultClient(BtRuntime runtime,
+                         Processor<C> processor,
+                         C context,
+                         ListenerSource<C> listenerSource) {
+        this.runtime = runtime;
         this.processor = processor;
-        this.listenerSource = listenerSource;
         this.context = context;
+        this.listenerSource = listenerSource;
 
-        this.future = Optional.empty();
-        this.listener = Optional.empty();
-        this.listenerFuture = Optional.empty();
+        this.futureOptional = Optional.empty();
+        this.listenerOptional = Optional.empty();
     }
 
     @Override
-    public CompletableFuture<?> startAsync(Consumer<TorrentSessionState> listener, long period) {
-        if (started) {
+    public synchronized CompletableFuture<?> startAsync(Consumer<TorrentSessionState> listener, long period) {
+        if (futureOptional.isPresent()) {
             throw new BtException("Can't start -- already running");
         }
-        started = true;
 
         this.listenerExecutor = Executors.newSingleThreadScheduledExecutor();
-        this.listener = Optional.of(listener);
-        this.listenerFuture = Optional.of(listenerExecutor.scheduleAtFixedRate(
-                this::notifyListener, period, period, TimeUnit.MILLISECONDS));
+        this.listenerOptional = Optional.of(listener);
+
+        listenerExecutor.scheduleAtFixedRate(this::notifyListener, period, period, TimeUnit.MILLISECONDS);
 
         return doStartAsync();
     }
 
     private void notifyListener() {
-        if (listener.isPresent()) {
-            Optional<TorrentSessionState> state = context.getState();
-            if (state.isPresent()) {
-                listener.get().accept(state.get());
-            }
-        }
+        listenerOptional.ifPresent(listener ->
+                context.getState().ifPresent(listener::accept));
+    }
+
+    private void shutdownListener() {
+        listenerExecutor.shutdownNow();
     }
 
     @Override
-    public CompletableFuture<?> startAsync() {
-        if (started) {
+    public synchronized CompletableFuture<?> startAsync() {
+        if (futureOptional.isPresent()) {
             throw new BtException("Can't start -- already running");
         }
-        started = true;
 
         return doStartAsync();
     }
 
     private CompletableFuture<?> doStartAsync() {
-        CompletableFuture<?> future = doStart();
-        this.future = Optional.of(future);
-        return future;
-    }
+        ensureRuntimeStarted();
+        attachToRuntime();
 
-    private CompletableFuture<?> doStart() {
-        CompletableFuture<?> future = CompletableFuture.runAsync(
-                () -> ChainProcessor.execute(processor, context, listenerSource), executor);
+        CompletableFuture<?> future = processor.process(context, listenerSource);
 
         future.whenComplete((r, t) -> notifyListener())
-                .whenComplete((r, t) -> listenerFuture.ifPresent(listener -> listener.cancel(true)))
-                .whenComplete((r, t) -> listenerExecutor.shutdownNow());
+                .whenComplete((r, t) -> shutdownListener())
+                .whenComplete((r, t) -> stop());
+
+        this.futureOptional = Optional.of(future);
 
         return future;
     }
 
-    // TODO: as long as this can be used for pausing the client without shutting down the runtime,
-    // it would be nice to send CHOKE/NOT_INTERESTED to all connections instead of silently cutting out
     @Override
-    public void stop() {
-        try {
-            // TODO: should also announce STOP to tracker here
-            context.getTorrentId().ifPresent(torrentId -> {
-                torrentRegistry.getDescriptor(torrentId).ifPresent(TorrentDescriptor::stop);
-            });
-        } finally {
-            future.ifPresent(future -> future.complete(null));
-            started = false;
+    public synchronized void stop() {
+        // order is important (more precisely, unsetting futureOptional BEFORE completing the future)
+        // to prevent attempt to detach the client after it has already been detached once
+        // (may happen when #stop() is called from the outside)
+        if (futureOptional.isPresent()) {
+            CompletableFuture<?> f = futureOptional.get();
+            futureOptional = Optional.empty();
+            f.complete(null);
+            detachFromRuntime();
         }
     }
 
+    private void ensureRuntimeStarted() {
+        if (!runtime.isRunning()) {
+            runtime.startup();
+        }
+    }
+
+    private void attachToRuntime() {
+        runtime.attachClient(this);
+    }
+
+    private void detachFromRuntime() {
+        runtime.detachClient(this);
+    }
+
     @Override
-    public boolean isStarted() {
-        return started;
+    public synchronized boolean isStarted() {
+        return futureOptional.isPresent();
     }
 }

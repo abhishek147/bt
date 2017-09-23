@@ -1,7 +1,24 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.torrent;
 
 import bt.data.IDataDescriptorFactory;
 import bt.data.Storage;
+import bt.event.EventSink;
 import bt.metainfo.Torrent;
 import bt.metainfo.TorrentId;
 import bt.service.IRuntimeLifecycleBinder;
@@ -26,6 +43,7 @@ public class AdhocTorrentRegistry implements TorrentRegistry {
 
     private IDataDescriptorFactory dataDescriptorFactory;
     private IRuntimeLifecycleBinder lifecycleBinder;
+    private EventSink eventSink;
 
     private Set<TorrentId> torrentIds;
     private ConcurrentMap<TorrentId, Torrent> torrents;
@@ -33,10 +51,12 @@ public class AdhocTorrentRegistry implements TorrentRegistry {
 
     @Inject
     public AdhocTorrentRegistry(IDataDescriptorFactory dataDescriptorFactory,
-                                IRuntimeLifecycleBinder lifecycleBinder) {
+                                IRuntimeLifecycleBinder lifecycleBinder,
+                                EventSink eventSink) {
 
         this.dataDescriptorFactory = dataDescriptorFactory;
         this.lifecycleBinder = lifecycleBinder;
+        this.eventSink = eventSink;
 
         this.torrentIds = ConcurrentHashMap.newKeySet();
         this.torrents = new ConcurrentHashMap<>();
@@ -88,7 +108,7 @@ public class AdhocTorrentRegistry implements TorrentRegistry {
             descriptor.setDataDescriptor(dataDescriptorFactory.createDescriptor(torrent, storage));
 
         } else {
-            descriptor = new DefaultTorrentDescriptor();
+            descriptor = new DefaultTorrentDescriptor(torrentId, eventSink);
             descriptor.setDataDescriptor(dataDescriptorFactory.createDescriptor(torrent, storage));
 
             DefaultTorrentDescriptor existing = descriptors.putIfAbsent(torrentId, descriptor);
@@ -107,7 +127,7 @@ public class AdhocTorrentRegistry implements TorrentRegistry {
     @Override
     public TorrentDescriptor register(TorrentId torrentId) {
         return getDescriptor(torrentId).orElseGet(() -> {
-            DefaultTorrentDescriptor descriptor = new DefaultTorrentDescriptor();
+            DefaultTorrentDescriptor descriptor = new DefaultTorrentDescriptor(torrentId, eventSink);
 
             DefaultTorrentDescriptor existing = descriptors.putIfAbsent(torrentId, descriptor);
             if (existing != null) {

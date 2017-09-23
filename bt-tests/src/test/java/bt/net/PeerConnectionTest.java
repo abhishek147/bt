@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.net;
 
 import bt.metainfo.TorrentId;
@@ -24,8 +40,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.spi.SelectorProvider;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -59,10 +73,10 @@ public class PeerConnectionTest {
     public void testConnection() throws InvalidMessageException, IOException {
         Peer peer = mock(Peer.class);
         MessageHandler<Message> messageHandler = TEST.getProtocol();
-        Supplier<Message> reader = new DefaultMessageReader(peer, clientChannel, messageHandler, BUFFER_SIZE);
-        Consumer<Message> writer = new DefaultMessageWriter(clientChannel, peer, messageHandler, BUFFER_SIZE);
-        MessageReaderWriter readerWriter = new DelegatingMessageReaderWriter(reader, writer);
-        PeerConnection connection = new DefaultPeerConnection(peer, clientChannel, readerWriter);
+        MessageReader reader = new MessageReader(peer, clientChannel, messageHandler, BUFFER_SIZE);
+        MessageWriter writer = new MessageWriter(clientChannel, peer, messageHandler, BUFFER_SIZE);
+        PeerConnectionMessageWorker readerWriter = new DelegatingPeerConnectionMessageWorker(reader, writer);
+        PeerConnection connection = new SocketPeerConnection(peer, clientChannel, readerWriter);
 
         Message message;
 

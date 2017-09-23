@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.metainfo;
 
 import bt.bencoding.BtParseException;
@@ -7,6 +23,7 @@ import org.junit.Test;
 
 import java.net.MalformedURLException;
 import java.nio.charset.Charset;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Optional;
@@ -14,7 +31,6 @@ import java.util.Optional;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 
 public class MetadataServiceTest {
 
@@ -30,8 +46,8 @@ public class MetadataServiceTest {
 
         Torrent torrent = metadataService.fromUrl(MetadataServiceTest.class.getResource("single_file.torrent"));
 
-        assertHasAttributes(torrent,
-                Optional.of(new AnnounceKey("http://jupiter.gx/ann")), "Arch-Uni-i686.iso", 524288L, 1766, 925892608L);
+        assertHasAttributes(torrent, Optional.of(new AnnounceKey("http://jupiter.gx/ann")), "Arch-Uni-i686.iso",
+                524288L, 1766, 925892608L, Optional.of(Instant.ofEpochMilli(1359439420000L)), Optional.of("sadpotato"));
 
         assertNotNull(torrent.getFiles());
         assertEquals(1, torrent.getFiles().size());
@@ -44,7 +60,8 @@ public class MetadataServiceTest {
 
         Torrent torrent = metadataService.fromUrl(MetadataServiceTest.class.getResource("single_file_info_dictionary.bin"));
 
-        assertHasAttributes(torrent, Optional.empty(), "Arch-Uni-i686.iso", 524288L, 1766, 925892608L);
+        assertHasAttributes(torrent, Optional.empty(), "Arch-Uni-i686.iso",
+                524288L, 1766, 925892608L, Optional.empty(), Optional.empty());
 
         assertNotNull(torrent.getFiles());
         assertEquals(1, torrent.getFiles().size());
@@ -55,20 +72,17 @@ public class MetadataServiceTest {
     @Test
     public void testBuildTorrent_MultiFile() throws Exception {
 
-        try {
-            Torrent torrent = metadataService.fromUrl(MetadataServiceTest.class.getResource("multi_file.torrent"));
+        Torrent torrent = metadataService.fromUrl(MetadataServiceTest.class.getResource("multi_file.torrent"));
 
-            AnnounceKey announceKey = new AnnounceKey(Arrays.asList(
-                    Collections.singletonList("http://jupiter.gx/ann"),
-                    Collections.singletonList("http://jupiter.local/announce")
-            ));
-            assertHasAttributes(torrent, Optional.of(announceKey), "BEWARE_BACH", 4194304L, 1329, 5573061611L);
+        AnnounceKey announceKey = new AnnounceKey(Arrays.asList(
+                Collections.singletonList("http://jupiter.gx/ann"),
+                Collections.singletonList("http://jupiter.local/announce")
+        ));
+        assertHasAttributes(torrent, Optional.of(announceKey), "BEWARE_BACH",
+                4194304L, 1329, 5573061611L, Optional.of(Instant.ofEpochMilli(1290553306000L)), Optional.of("sadpotato"));
 
-            assertNotNull(torrent.getFiles());
-            assertEquals(6, torrent.getFiles().size());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        assertNotNull(torrent.getFiles());
+        assertEquals(6, torrent.getFiles().size());
 
         // TODO: add checks for all torrent files
     }
@@ -78,12 +92,11 @@ public class MetadataServiceTest {
                                      String name,
                                      long chunkSize,
                                      int chunkHashesCount,
-                                     long size) throws MalformedURLException {
+                                     long size,
+                                     Optional<Instant> creationDate,
+                                     Optional<String> createdBy) throws MalformedURLException {
 
-        if (announceKey.isPresent()) {
-            assertTrue(torrent.getAnnounceKey().isPresent());
-            assertEquals(announceKey.get(), torrent.getAnnounceKey().get());
-        }
+        assertEquals(announceKey, torrent.getAnnounceKey());
         assertEquals(name, torrent.getName());
         assertEquals(chunkSize, torrent.getChunkSize());
 
@@ -95,8 +108,9 @@ public class MetadataServiceTest {
         assertEquals(chunkHashesCount, actualChunkHashesCount);
 
         assertEquals(size, torrent.getSize());
+        assertEquals(creationDate, torrent.getCreationDate());
+        assertEquals(createdBy, torrent.getCreatedBy());
     }
-
     @Test
     public void testBuildTorrent_ParseExceptionContents() {
 

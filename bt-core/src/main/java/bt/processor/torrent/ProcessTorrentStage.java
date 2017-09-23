@@ -1,9 +1,25 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.processor.torrent;
 
 import bt.metainfo.Torrent;
 import bt.metainfo.TorrentId;
-import bt.processor.BaseProcessingStage;
 import bt.processor.ProcessingStage;
+import bt.processor.TerminateOnErrorProcessingStage;
 import bt.processor.listener.ProcessingEvent;
 import bt.torrent.TorrentDescriptor;
 import bt.torrent.TorrentRegistry;
@@ -14,24 +30,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 
-public class ProcessTorrentStage<C extends TorrentContext> extends BaseProcessingStage<C> {
+public class ProcessTorrentStage<C extends TorrentContext> extends TerminateOnErrorProcessingStage<C> {
     private static final Logger LOGGER = LoggerFactory.getLogger(ProcessTorrentStage.class);
 
     private TorrentRegistry torrentRegistry;
     private ITrackerService trackerService;
-    private ExecutorService executor;
 
     public ProcessTorrentStage(ProcessingStage<C> next,
                                TorrentRegistry torrentRegistry,
-                               ITrackerService trackerService,
-                               ExecutorService executor) {
+                               ITrackerService trackerService) {
         super(next);
         this.torrentRegistry = torrentRegistry;
         this.trackerService = trackerService;
-        this.executor = executor;
     }
 
     @Override
@@ -45,46 +56,20 @@ public class ProcessTorrentStage<C extends TorrentContext> extends BaseProcessin
             context.setAnnouncer(announcer);
         }
 
+        descriptor.start();
         start(context);
 
-        CompletableFuture<Void> future;
-
-        future = CompletableFuture.runAsync(() -> {
-            while (descriptor.isActive()) {
-                try {
-                    Thread.sleep(1000);
-                    if (context.getState().get().getPiecesRemaining() == 0) {
-                        descriptor.complete();
-                        return;
-                    }
-                } catch (InterruptedException e) {
-                    finish(context);
-                    throw new RuntimeException(e);
+        while (descriptor.isActive()) {
+            try {
+                Thread.sleep(1000);
+                if (context.getState().get().getPiecesRemaining() == 0) {
+                    complete(context);
+                    break;
                 }
+            } catch (InterruptedException e) {
+                throw new RuntimeException("Unexpectedly interrupted", e);
             }
-        }, executor);
-
-        future = future.thenRunAsync(() -> {
-            // might have been stopped externally before the torrent was actually completed
-            if (context.getState().get().getPiecesRemaining() == 0) {
-                complete(context);
-            }
-        }, executor);
-
-        future = future.thenRunAsync(() -> {
-            while (descriptor.isActive()) {
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    finish(context);
-                    throw new RuntimeException(e);
-                }
-            }
-        }, executor);
-
-        future.join();
-
-        finish(context);
+        }
     }
 
     private void start(C context) {
@@ -101,6 +86,7 @@ public class ProcessTorrentStage<C extends TorrentContext> extends BaseProcessin
 
     private void complete(C context) {
         try {
+            context.getTorrentId().ifPresent(torrentId -> getDescriptor(torrentId).complete());
             onCompleted(context);
         } catch (Exception e) {
             LOGGER.error("Unexpected error", e);
@@ -111,21 +97,6 @@ public class ProcessTorrentStage<C extends TorrentContext> extends BaseProcessin
         context.getAnnouncer().ifPresent(TrackerAnnouncer::complete);
     }
 
-    private void finish(C context) {
-        try {
-            onFinished(context);
-        } catch (Exception e) {
-            LOGGER.error("Unexpected error", e);
-        }
-    }
-
-    protected void onFinished(C context) {
-        // TODO: misbehaving... but currently no way to know if runtime automatic shutdown was disabled
-        // previously this was called via BtRuntime -> BtClient -> TorrentDescriptor
-//        announcer.stop();
-        getDescriptor(context.getTorrentId().get()).stop();
-    }
-
     private TorrentDescriptor getDescriptor(TorrentId torrentId) {
         return torrentRegistry.getDescriptor(torrentId)
                 .orElseThrow(() -> new IllegalStateException("No descriptor present for torrent ID: " + torrentId));
@@ -133,6 +104,6 @@ public class ProcessTorrentStage<C extends TorrentContext> extends BaseProcessin
 
     @Override
     public ProcessingEvent after() {
-        return null;
+        return ProcessingEvent.DOWNLOAD_COMPLETE;
     }
 }

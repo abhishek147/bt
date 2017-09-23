@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.net.extended;
 
 import bt.metainfo.TorrentId;
@@ -7,6 +23,8 @@ import bt.protocol.Handshake;
 import bt.protocol.IExtendedHandshakeFactory;
 import bt.protocol.extended.ExtendedHandshake;
 import com.google.inject.Inject;
+
+import java.io.IOException;
 
 /**
  * Sets a reserved bit, indicating that
@@ -31,7 +49,11 @@ public class ExtendedProtocolHandshakeHandler implements HandshakeHandler {
         // do not send the extended handshake
         // if local client does not have any extensions turned on
         if (!extendedHandshake.getData().isEmpty()) {
-            connection.postMessage(extendedHandshake);
+            try {
+                connection.postMessage(extendedHandshake);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to send extended handshake to peer: " + connection.getRemotePeer(), e);
+            }
         }
     }
 

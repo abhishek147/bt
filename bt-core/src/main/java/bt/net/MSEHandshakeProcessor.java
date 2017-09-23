@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.net;
 
 import bt.metainfo.TorrentId;
@@ -25,8 +41,6 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.Random;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 /**
  * Implements Message Stream Encryption protocol negotiation.
@@ -59,7 +73,7 @@ class MSEHandshakeProcessor {
         this.bufferSize = bufferSize;
     }
 
-    MessageReaderWriter negotiateOutgoing(Peer peer, ByteChannel channel, TorrentId torrentId) throws IOException {
+    PeerConnectionMessageWorker negotiateOutgoing(Peer peer, ByteChannel channel, TorrentId torrentId) throws IOException {
         if (LOGGER.isTraceEnabled()) {
             LOGGER.trace("Negotiating encryption for outgoing connection: {}", peer);
         }
@@ -80,22 +94,9 @@ class MSEHandshakeProcessor {
          */
 
         // check if the encryption negotiation can be skipped or preemptively aborted
-        EncryptionPolicy peerEncryptionPolicy = peer.getOptions().getEncryptionPolicy();
-        if (LOGGER.isTraceEnabled()) {
-            LOGGER.trace("Peer {} has encryption policy: {}", peer, peerEncryptionPolicy);
-        }
-        assertPolicyIsCompatible(peerEncryptionPolicy);
 
         ByteBuffer in = ByteBuffer.allocateDirect(bufferSize);
         ByteBuffer out = ByteBuffer.allocateDirect(bufferSize);
-
-        if (peerEncryptionPolicy == EncryptionPolicy.REQUIRE_PLAINTEXT ||
-                (peerEncryptionPolicy == EncryptionPolicy.PREFER_PLAINTEXT &&
-                        (localEncryptionPolicy == EncryptionPolicy.PREFER_PLAINTEXT
-                                || localEncryptionPolicy == EncryptionPolicy.REQUIRE_PLAINTEXT))) {
-            // if peer requires plaintext and we support it, then do not negotiate encryption and use plaintext right away
-            return createReaderWriter(peer, channel, in, out);
-        }
 
         ByteChannelReader reader = reader(channel);
 
@@ -241,7 +242,7 @@ class MSEHandshakeProcessor {
         }
     }
 
-    MessageReaderWriter negotiateIncoming(Peer peer, ByteChannel channel) throws IOException {
+    PeerConnectionMessageWorker negotiateIncoming(Peer peer, ByteChannel channel) throws IOException {
         if (LOGGER.isTraceEnabled()) {
             LOGGER.trace("Negotiating encryption for incoming connection: {}", peer);
         }
@@ -447,10 +448,10 @@ class MSEHandshakeProcessor {
         }
     }
 
-    private MessageReaderWriter createReaderWriter(Peer peer, ByteChannel channel, ByteBuffer in, ByteBuffer out) {
-        Supplier<Message> reader = new DefaultMessageReader(peer, channel, messageHandler, in);
-        Consumer<Message> writer = new DefaultMessageWriter(channel, peer, messageHandler, out);
-        return new DelegatingMessageReaderWriter(reader, writer);
+    private PeerConnectionMessageWorker createReaderWriter(Peer peer, ByteChannel channel, ByteBuffer in, ByteBuffer out) {
+        MessageReader reader = new MessageReader(peer, channel, messageHandler, in);
+        MessageWriter writer = new MessageWriter(channel, peer, messageHandler, out);
+        return new DelegatingPeerConnectionMessageWorker(reader, writer);
     }
 
     private byte[] getPadding(int length) {

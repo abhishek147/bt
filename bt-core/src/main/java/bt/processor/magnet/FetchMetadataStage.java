@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.processor.magnet;
 
 import bt.metainfo.IMetadataService;
@@ -7,9 +23,9 @@ import bt.metainfo.TorrentId;
 import bt.metainfo.TorrentSource;
 import bt.net.InetPeer;
 import bt.peer.IPeerRegistry;
-import bt.processor.BaseProcessingStage;
 import bt.processor.ProcessingStage;
 import bt.processor.listener.ProcessingEvent;
+import bt.processor.TerminateOnErrorProcessingStage;
 import bt.runtime.Config;
 import bt.torrent.TorrentDescriptor;
 import bt.torrent.TorrentRegistry;
@@ -22,7 +38,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
-public class FetchMetadataStage extends BaseProcessingStage<MagnetContext> {
+public class FetchMetadataStage extends TerminateOnErrorProcessingStage<MagnetContext> {
 
     private IMetadataService metadataService;
     private TorrentRegistry torrentRegistry;
@@ -68,10 +84,6 @@ public class FetchMetadataStage extends BaseProcessingStage<MagnetContext> {
         // TODO: do we need a tracker announce for magnet-based torrents?
 //        TrackerAnnouncer announcer = new TrackerAnnouncer(trackerService, torrentId, null);
 //        announcer.start();
-
-        context.getMagnetUri().getPeerAddresses().forEach(address -> {
-            peerRegistry.addPeer(torrentId, new InetPeer(address));
-        });
 
         Torrent torrent = metadataConsumer.waitForTorrent();
         torrent = amendTorrent(torrent, context.getMagnetUri().getDisplayName());

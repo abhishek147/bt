@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.event;
 
 import bt.data.Bitfield;
@@ -12,6 +28,12 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
+/**
+ * Basic implementation of event bus, that connects event producers and listeners.
+ * In this implementation all events are delivered synchronously.
+ *
+ * @since 1.5
+ */
 public class EventBus implements EventSink, EventSource {
     private static final Logger LOGGER = LoggerFactory.getLogger(EventBus.class);
 
@@ -62,6 +84,24 @@ public class EventBus implements EventSink, EventSource {
         }
     }
 
+    @Override
+    public void fireTorrentStarted(TorrentId torrentId) {
+        long timestamp = System.currentTimeMillis();
+        if (hasListeners(TorrentStartedEvent.class)) {
+            long id = nextId();
+            fireEvent(new TorrentStartedEvent(id, timestamp, torrentId));
+        }
+    }
+
+    @Override
+    public void fireTorrentStopped(TorrentId torrentId) {
+        long timestamp = System.currentTimeMillis();
+        if (hasListeners(TorrentStoppedEvent.class)) {
+            long id = nextId();
+            fireEvent(new TorrentStoppedEvent(id, timestamp, torrentId));
+        }
+    }
+
     private boolean hasListeners(Class<? extends BaseEvent> eventType) {
         Collection<Consumer<? extends BaseEvent>> listeners = this.listeners.get(eventType);
         return listeners != null && !listeners.isEmpty();
@@ -75,6 +115,10 @@ public class EventBus implements EventSink, EventSource {
         eventLock.readLock().lock();
         try {
             Collection<Consumer<? extends BaseEvent>> listeners = this.listeners.get(event.getClass());
+            if (LOGGER.isTraceEnabled()) {
+                int count = (listeners == null) ? 0 : listeners.size();
+                LOGGER.trace("Firing event: {}. Listeners count: {}", event, count);
+            }
             if (listeners != null && !listeners.isEmpty()) {
                 for (Consumer<? extends BaseEvent> listener : listeners) {
                     @SuppressWarnings("unchecked")
@@ -111,6 +155,18 @@ public class EventBus implements EventSink, EventSource {
         return this;
     }
 
+    @Override
+    public EventSource onTorrentStarted(Consumer<TorrentStartedEvent> listener) {
+        addListener(TorrentStartedEvent.class, listener);
+        return this;
+    }
+
+    @Override
+    public EventSource onTorrentStopped(Consumer<TorrentStoppedEvent> listener) {
+        addListener(TorrentStoppedEvent.class, listener);
+        return this;
+    }
+
     private <E extends BaseEvent> void addListener(Class<E> eventType, Consumer<E> listener) {
         Collection<Consumer<? extends BaseEvent>> listeners = this.listeners.get(eventType);
         if (listeners == null) {
@@ -123,11 +179,11 @@ public class EventBus implements EventSink, EventSource {
 
         eventLock.writeLock().lock();
         try {
-            Consumer<E> safeListener = e -> {
+            Consumer<E> safeListener = event -> {
                 try {
-                    listener.accept(e);
-                } catch (Exception e1) {
-                    LOGGER.error("Listener invocation failed", e);
+                    listener.accept(event);
+                } catch (Exception ex) {
+                    LOGGER.error("Listener invocation failed", ex);
                 }
             };
             listeners.add(safeListener);

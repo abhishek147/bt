@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.net;
 
 import bt.metainfo.TorrentId;
@@ -9,6 +25,7 @@ import bt.torrent.TorrentRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.Optional;
@@ -37,8 +54,17 @@ class IncomingHandshakeHandler implements ConnectionHandler {
 
     @Override
     public boolean handleConnection(PeerConnection connection) {
+        Peer peer = connection.getRemotePeer();
+        Message firstMessage = null;
+        try {
+            firstMessage = connection.readMessage(handshakeTimeout.toMillis());
+        } catch (IOException e) {
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("Failed to receive handshake from peer: {}. Reason: {} ({})",
+                        peer, e.getClass().getName(), e.getMessage());
+            }
+        }
 
-        Message firstMessage = connection.readMessage(handshakeTimeout.toMillis());
         if (firstMessage != null) {
             if (Handshake.class.equals(firstMessage.getClass())) {
 
@@ -53,8 +79,16 @@ class IncomingHandshakeHandler implements ConnectionHandler {
                     handshakeHandlers.forEach(handler ->
                             handler.processOutgoingHandshake(handshake));
 
-                    connection.postMessage(handshake);
-                    ((DefaultPeerConnection) connection).setTorrentId(torrentId);
+                    try {
+                        connection.postMessage(handshake);
+                    } catch (IOException e) {
+                        if (LOGGER.isDebugEnabled()) {
+                            LOGGER.debug("Failed to send handshake to peer: {}. Reason: {} ({})",
+                                    peer, e.getClass().getName(), e.getMessage());
+                        }
+                        return false;
+                    }
+                    connection.setTorrentId(torrentId);
 
                     handshakeHandlers.forEach(handler ->
                             handler.processIncomingHandshake(new WriteOnlyPeerConnection(connection), peerHandshake));
@@ -62,10 +96,8 @@ class IncomingHandshakeHandler implements ConnectionHandler {
                     return true;
                 }
             } else {
-                if (LOGGER.isTraceEnabled()) {
-                    LOGGER.trace("Received message of unexpected type " + firstMessage.getClass().getSimpleName() +
-                            " as handshake; remote peer: " + connection.getRemotePeer());
-                }
+                LOGGER.warn("Received message of unexpected type '{}' instead of handshake from peer: {}",
+                        firstMessage.getClass(), peer);
             }
         }
         return false;

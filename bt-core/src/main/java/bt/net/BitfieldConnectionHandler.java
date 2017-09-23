@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.net;
 
 import bt.data.Bitfield;
@@ -5,9 +21,8 @@ import bt.protocol.Handshake;
 import bt.torrent.TorrentDescriptor;
 import bt.torrent.TorrentRegistry;
 import com.google.inject.Inject;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.Optional;
 
 /**
@@ -16,8 +31,6 @@ import java.util.Optional;
  * @since 1.0
  */
 public class BitfieldConnectionHandler implements HandshakeHandler {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(BitfieldConnectionHandler.class);
 
     private TorrentRegistry torrentRegistry;
 
@@ -34,11 +47,12 @@ public class BitfieldConnectionHandler implements HandshakeHandler {
             Bitfield bitfield = descriptorOptional.get().getDataDescriptor().getBitfield();
 
             if (bitfield.getPiecesComplete() > 0) {
+                Peer peer = connection.getRemotePeer();
                 bt.protocol.Bitfield bitfieldMessage = new bt.protocol.Bitfield(bitfield.getBitmask());
-                connection.postMessage(bitfieldMessage);
-
-                if (LOGGER.isTraceEnabled()) {
-                    LOGGER.trace("Sending " + bitfieldMessage + " for " + connection.getRemotePeer());
+                try {
+                    connection.postMessage(bitfieldMessage);
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to send bitfield to peer: " + peer, e);
                 }
             }
         }

@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2016—2017 Andrei Tomashpolskiy and individual contributors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package bt.net;
 
 import bt.metainfo.TorrentId;
@@ -6,27 +22,28 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.nio.channels.Channel;
+import java.nio.channels.SocketChannel;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * @since 1.0
  */
-class DefaultPeerConnection implements PeerConnection {
+class SocketPeerConnection implements PeerConnection {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultPeerConnection.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(SocketPeerConnection.class);
 
     private static final long WAIT_BETWEEN_READS = 100L;
 
-    private volatile TorrentId torrentId;
+    private final AtomicReference<TorrentId> torrentId;
     private final Peer remotePeer;
 
-    private final Channel channel;
-    private final MessageReaderWriter readerWriter;
+    private final SocketChannel channel;
+    private final PeerConnectionMessageWorker readerWriter;
 
     private volatile boolean closed;
     private final AtomicLong lastActive;
@@ -34,9 +51,10 @@ class DefaultPeerConnection implements PeerConnection {
     private final ReentrantLock readLock;
     private final Condition condition;
 
-    DefaultPeerConnection(Peer remotePeer,
-                          Channel channel,
-                          MessageReaderWriter readerWriter) {
+    SocketPeerConnection(Peer remotePeer,
+                         SocketChannel channel,
+                         PeerConnectionMessageWorker readerWriter) {
+        this.torrentId = new AtomicReference<>();
         this.remotePeer = remotePeer;
         this.channel = channel;
         this.readerWriter = readerWriter;
@@ -48,17 +66,18 @@ class DefaultPeerConnection implements PeerConnection {
     /**
      * @since 1.0
      */
-    void setTorrentId(TorrentId torrentId) {
-        this.torrentId = torrentId;
+    @Override
+    public TorrentId setTorrentId(TorrentId torrentId) {
+        return this.torrentId.getAndSet(torrentId);
     }
 
     @Override
     public TorrentId getTorrentId() {
-        return torrentId;
+        return torrentId.get();
     }
 
     @Override
-    public synchronized Message readMessageNow() {
+    public synchronized Message readMessageNow() throws IOException {
         Message message = null;
         Optional<Message> messageOptional = readerWriter.readMessage();
         if (messageOptional.isPresent()) {
@@ -72,7 +91,7 @@ class DefaultPeerConnection implements PeerConnection {
     }
 
     @Override
-    public synchronized Message readMessage(long timeout) {
+    public synchronized Message readMessage(long timeout) throws IOException {
         Message message = readMessageNow();
         if (message == null) {
 
@@ -112,7 +131,7 @@ class DefaultPeerConnection implements PeerConnection {
     }
 
     @Override
-    public synchronized void postMessage(Message message) {
+    public synchronized void postMessage(Message message) throws IOException {
         updateLastActive();
         if (LOGGER.isTraceEnabled()) {
             LOGGER.trace("Sending message to peer: " + remotePeer + " -- " + message);
@@ -160,5 +179,9 @@ class DefaultPeerConnection implements PeerConnection {
     @Override
     public long getLastActive() {
         return lastActive.get();
+    }
+
+    public SocketChannel getChannel() {
+        return channel;
     }
 }
